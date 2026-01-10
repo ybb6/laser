@@ -1,10 +1,17 @@
-# LASER: Latent Reasoning for Vision-Language Models
+# Forest Before Trees: Latent Superposition for Efficient Visual Reasoning
 
-Official implementation of **LASER** (Latent Reasoning), enabling vision-language models to perform implicit reasoning in continuous latent space.
+[![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/[TODO])
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-## Update
+Official implementation of **Laser** (Latent Superposition for Effective Visual Reasoning). Laser enables vision-language models to perform implicit reasoning in continuous latent space, prioritizing global understanding ("Forest") before detailed processing ("Trees").
 
-- [2025/01] Code release with DWAL training
+> **Note:** Code is released for reference; weights and data will be available soon.
+
+## 📢 News
+
+- **[2025/01]** Code release for Laser.
+- **[Coming Soon]** Pre-trained checkpoints (Laser-7B) release.
+- **[Coming Soon]** Training data release.
 
 ## Table of Contents
 
@@ -12,17 +19,17 @@ Official implementation of **LASER** (Latent Reasoning), enabling vision-languag
 - [Quick Start](#quick-start)
 - [Training](#training)
 - [Evaluation](#evaluation)
-- [Model Checkpoints](#model-checkpoints)
+- [Model](#model-zoo)
 - [Citation](#citation)
 
 ## Installation
 
 ```bash
-git clone https://github.com/[TODO]/LASER.git
-cd LASER
+git clone https://github.com/[YOUR_USERNAME]/Laser.git
+cd Laser
 pip install -r requirements.txt
 
-# Optional: Flash Attention 2 (recommended)
+# Optional: Flash Attention 2 (recommended for faster training/inference)
 pip install flash-attn --no-build-isolation
 ```
 
@@ -30,17 +37,20 @@ pip install flash-attn --no-build-isolation
 - Python >= 3.10
 - PyTorch >= 2.1.0
 - CUDA >= 11.8
-- 8× GPUs with ≥40GB VRAM (for training)
 
 ## Quick Start
 
 ### Training
+
+To start training with the default configuration:
 
 ```bash
 bash scripts/finetune_laser_dwal_7b.sh
 ```
 
 ### Evaluation
+
+To run parallel evaluation across supported benchmarks:
 
 ```bash
 bash evaluation/run_evaluation_dwal_parallel.sh
@@ -50,7 +60,7 @@ bash evaluation/run_evaluation_dwal_parallel.sh
 
 ### Data Format
 
-Training data should follow LLaVA format with LASER tokens:
+Training data should follow the LLaVA-style JSON format, extended with Laser-specific tokens:
 
 ```json
 [
@@ -71,13 +81,13 @@ Training data should follow LLaVA format with LASER tokens:
 ]
 ```
 
-- `<|laser_start|>` / `<|laser_end|>`: Mark latent reasoning region
-- `<laser>`: Placeholder for each reasoning step (replaced during training)
-- `<answer>`: Contains the final answer
+- `<|laser_start|>` / `<|laser_end|>`: Delimiters for the latent reasoning region.
+- `<laser>`: Placeholder token for each latent reasoning step (replaced dynamically during training).
+- `<answer>`: Wraps the final textual output.
 
 ### Precompute Sample Lengths
 
-For efficient dynamic batching:
+For efficient dynamic batching during training, precompute the token lengths:
 
 ```bash
 python scripts/precompute_lengths.py \
@@ -86,78 +96,46 @@ python scripts/precompute_lengths.py \
     --model_id Qwen/Qwen2.5-VL-7B-Instruct
 ```
 
-### Key Hyperparameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `DWAL_TEMPERATURE` | 1.0 | Softmax temperature for target distribution |
-| `DWAL_ENTROPY_THRESHOLD` | 0.6 | Threshold for "confused" state detection |
-| `DWAL_FORCE_PROB` | 0.8 | Force probability when confused |
-| `DYNAMIC_TOKEN_CAP` | 8192 | Memory constraint (batch_size × seq_len) |
-| `MAX_STEPS` | 500 | Total training steps |
-
 ## Evaluation
 
 ### Supported Benchmarks
 
+We support a comprehensive suite of visual reasoning benchmarks:
+
 | Benchmark | Description |
 |-----------|-------------|
-| BLINK | Visual reasoning (14 subtasks) |
-| MMVP | Multimodal visual perception |
-| MMStar | Multimodal reasoning |
-| SEED-Bench-2-Plus | Text-rich understanding |
-| HallusionBench | Hallucination detection |
-| HR-Bench | High-resolution understanding |
+| **BLINK** | Visual reasoning (14 subtasks) |
+| **MMVP** | Multimodal visual perception |
+| **MMStar** | Multimodal reasoning |
+| **SEED-Bench-2-Plus** | Text-rich understanding |
+| **HallusionBench** | Hallucination detection |
+| **HR-Bench** | High-resolution understanding |
 
-### Single GPU
 
-```bash
-python evaluation/evaluation_local.py \
-    --checkpoint checkpoints/checkpoint-500 \
-    --benchmark blink mmvp mmstar \
-    --strategy dynamic \
-    --max_laser_steps 8
-```
+## Model
 
-### Multi-GPU Parallel
+### Checkpoints
+We will release the pre-trained weights upon acceptance or shortly after the arXiv release.
 
-```bash
-# 1. Run parallel evaluation
-bash evaluation/run_evaluation_dwal_parallel.sh
+| Model | Base Model | Status | Download |
+|-------|------------|--------|----------|
+| **Laser-7B** | Qwen2.5-VL-7B-Instruct | *Coming Soon* | - |
 
-# 2. Merge results
-python evaluation/merge_stage1_results.py \
-    --benchmark blink \
-    --checkpoint checkpoints/checkpoint-500 \
-    --strategy dynamic \
-    --num_ranks 8
-```
+### Training Data
 
-## Model Checkpoints
+| Dataset | Description | Status | Download |
+|---------|-------------|--------|----------|
+| ScanPath | Curated reasoning instruction data | *Coming Soon* | - |
 
-| Model | Base | Download |
-|-------|------|----------|
-| LASER-7B | Qwen2.5-VL-7B-Instruct | [TODO: HuggingFace] |
-
-## Training Data
-
-| Dataset | Download |
-|---------|----------|
-| LASER Training Data | [TODO: Link] |
-
-## Results
-
-| Model | BLINK | MMVP | MMStar | SEED-2+ | HalluBench | HR-Bench |
-|-------|-------|------|--------|---------|------------|----------|
-| Qwen2.5-VL-7B | - | - | - | - | - | - |
-| LASER-7B | - | - | - | - | - | - |
 
 ## Citation
 
+If you find our work useful, please consider citing:
+
 ```bibtex
-@article{laser2025,
-  title={LASER: Latent Reasoning for Vision-Language Models},
-  author={[TODO]},
+@article{laser2025forest,
+  title={Laser: Latent Superposition for Efficient Visual Reasoning},
+  author={[Author Names TODO]},
   journal={arXiv preprint arXiv:[TODO]},
   year={2025}
 }
@@ -165,10 +143,12 @@ python evaluation/merge_stage1_results.py \
 
 ## License
 
-Apache-2.0 License
+This project is licensed under the [Apache-2.0 License](LICENSE).
 
 ## Acknowledgement
 
+We thank the authors of the following projects for their open-source contributions:
 - [Qwen2.5-VL](https://github.com/QwenLM/Qwen2.5-VL)
 - [Hugging Face Transformers](https://github.com/huggingface/transformers)
 - [InternVL](https://github.com/OpenGVLab/InternVL)
+```
