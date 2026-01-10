@@ -1,0 +1,27 @@
+# DWAL Training and Evaluation Dependencies
+
+# Core ML frameworks
+torch>=2.1.0
+transformers>=4.45.0
+accelerate>=0.25.0
+datasets>=2.16.0
+
+# Training
+deepspeed>=0.12.0
+trl>=0.7.0
+
+# Qwen-VL specific
+qwen-vl-utils>=0.0.8
+
+# Data processing
+numpy>=1.24.0
+pandas>=2.0.0
+pillow>=10.0.0
+
+# Utilities
+tqdm>=4.66.0
+
+# Optional dependencies (uncomment if needed)
+# flash-attn>=2.5.0      # Flash Attention 2 (requires CUDA)
+# wandb>=0.16.0          # Weights & Biases logging
+# bitsandbytes>=0.41.0   # 8-bit optimizers

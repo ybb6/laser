@@ -1,0 +1,52 @@
+# Ignore everything
+*
+
+# Allow directories (must come before files)
+!scripts/
+!evaluation/
+!src/
+!src/model/
+!src/trainer/
+!src/dataset/
+!src/train/
+
+# Root files
+!README.md
+!requirements.txt
+!.gitignore
+
+# scripts/
+!scripts/finetune_laser_dwal_7b.sh
+!scripts/zero3_offload_save_safe.json
+
+# evaluation/
+!evaluation/evaluation_local.py
+!evaluation/bench_func.py
+!evaluation/merge_stage1_results.py
+!evaluation/run_evaluation_dwal_parallel.sh
+
+# src/
+!src/constants.py
+!src/params.py
+
+# src/model/
+!src/model/qwen_laser_model.py
+
+# src/trainer/
+!src/trainer/__init__.py
+!src/trainer/laser_trainer.py
+
+# src/dataset/
+!src/dataset/__init__.py
+!src/dataset/data_utils.py
+!src/dataset/laser_sft_dataset_packed.py
+!src/dataset/dynamic_batch_dataset.py
+!src/dataset/dynamic_batch_collator.py
+
+# src/train/
+!src/train/train_laser.py
+!src/train/train_utils.py
+!src/train/monkey_patch_forward_laser.py
+!src/train/forward_dwal.py
+!src/train/monkey_patch_patch_emb.py
+!src/train/monkey_patch_dataloader.py
