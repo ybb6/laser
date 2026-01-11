@@ -126,7 +126,7 @@ class QwenWithLaser(Qwen2_5_VLForConditionalGeneration):
         laser_end_threshold: Optional[float]=0.02,
         laser_steps: Optional[List[int]]=None,
         repetition_exit: Optional[bool]=False,
-        save_laser_topk: Optional[int]=None,  # None=不保存, 整数=保存top-k tokens及概率
+        save_laser_topk: Optional[int]=None,  # None=don't save, int=save top-k tokens and probabilities
         **kwargs,
         ) -> Union[GenerateOutput, torch.LongTensor]:
         """

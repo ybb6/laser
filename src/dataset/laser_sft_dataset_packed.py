@@ -58,17 +58,17 @@ class IterableSupervisedDatasetLaser(Dataset):
     """
     Map-style Dataset for LASER training.
 
-    支持两种模式:
-    - bboxes 模式: 从边界框提取视觉 token 索引
-    - reasoning_chain 模式 (DWAL): 使用实际推理链文本
+    Supports two modes:
+    - bboxes mode: extract visual token indices from bounding boxes
+    - reasoning_chain mode (DWAL): use actual reasoning chain text
 
     Args:
-        data_path: 数据 JSON 文件路径
-        image_folder: 图像文件夹路径
+        data_path: Data JSON file path
+        image_folder: Image folder path
         processor: Tokenizer/Processor
-        data_args: 数据参数
-        ds_name: 数据集名称
-        model_id: 模型标识
+        data_args: Data arguments
+        ds_name: Dataset name
+        model_id: Model identifier
     """
 
     def __init__(
@@ -82,7 +82,7 @@ class IterableSupervisedDatasetLaser(Dataset):
     ):
         super().__init__()
 
-        # 加载原始数据
+        # Load raw data
         if isinstance(data_path, str):
             self.raw_data = json.load(open(data_path, "r"))
         else:
@@ -94,7 +94,7 @@ class IterableSupervisedDatasetLaser(Dataset):
         self.image_folder = image_folder
         self.ds_name = ds_name
 
-        # 图像处理参数
+        # Image processing parameters
         self.image_min_pixel = data_args.image_min_pixels
         self.image_max_pixel = data_args.image_max_pixels
         self.video_min_pixel = data_args.video_min_pixels
@@ -105,7 +105,7 @@ class IterableSupervisedDatasetLaser(Dataset):
         self.video_resized_h = data_args.video_resized_height
         self.fps = data_args.fps
 
-        # NaN blacklist (可选)
+        # NaN blacklist (optional)
         self.nan_blacklist = set()
         nan_blacklist_path = getattr(data_args, 'nan_blacklist_path', None)
         if nan_blacklist_path and os.path.exists(nan_blacklist_path):
@@ -130,10 +130,10 @@ class IterableSupervisedDatasetLaser(Dataset):
         return len(self.raw_data)
 
     def __getitem__(self, i: int) -> Optional[Dict[str, torch.Tensor]]:
-        """获取单个样本。"""
+        """Get a single sample."""
         sources = self.raw_data[i]
 
-        # 检查 NaN blacklist
+        # Check NaN blacklist
         question_id = sources.get('question_id', -1)
         if question_id != -1 and question_id in self.nan_blacklist:
             return None
@@ -144,7 +144,7 @@ class IterableSupervisedDatasetLaser(Dataset):
         grid_key = "image_grid_thw"
         pixel_key = "pixel_values"
 
-        # 加载图像
+        # Load images
         image_files = sources["image"]
         if isinstance(image_files, str):
             image_files = [image_files]
@@ -162,7 +162,7 @@ class IterableSupervisedDatasetLaser(Dataset):
                 self.image_resized_h
             ))
 
-        # 提取 LASER tokens
+        # Extract LASER tokens
         image_grid_thw = processor(
             text=[""],
             images=images,
@@ -172,7 +172,7 @@ class IterableSupervisedDatasetLaser(Dataset):
             return_tensors='pt'
         )['image_grid_thw']
 
-        # 支持 bboxes 和 reasoning_chain 两种模式
+        # Support both bboxes and reasoning_chain modes
         if 'bboxes' in sources:
             laser_token_idxs_list = self.bbox_to_token_idxs(sources['bboxes'], image_grid_thw)
             sources = copy.deepcopy(llava_to_openai_laser(
@@ -182,7 +182,7 @@ class IterableSupervisedDatasetLaser(Dataset):
                 fixed_num_of_laser_tokens=self.data_args.fixed_num_of_laser_tokens
             ))
         elif 'reasoning_chain' in sources:
-            # DWAL 模式
+            # DWAL mode
             reasoning_chain_text = " ".join(sources['reasoning_chain'])
             laser_token_idxs_list = self.reasoning_chain_to_token_idxs(sources['reasoning_chain'])
             sources = copy.deepcopy(llava_to_openai_dwal(
@@ -199,7 +199,7 @@ class IterableSupervisedDatasetLaser(Dataset):
                 fixed_num_of_laser_tokens=self.data_args.fixed_num_of_laser_tokens
             ))
 
-        # 构建 input_ids 和 labels
+        # Build input_ids and labels
         all_input_ids = []
         all_labels = []
         all_pixel_values = []
@@ -218,7 +218,7 @@ class IterableSupervisedDatasetLaser(Dataset):
             all_input_ids.append(system_message_input_ids.squeeze(0))
             all_labels.append(system_labels.squeeze(0))
 
-        # 处理对话轮次
+        # Process conversation turns
         for j in range(0, len(sources), 2):
             user_input = sources[j]
             gpt_response = sources[j + 1]
@@ -266,15 +266,15 @@ class IterableSupervisedDatasetLaser(Dataset):
             all_input_ids.append(input_ids)
             all_labels.append(labels)
 
-        # 合并所有轮次
+        # Merge all turns
         input_ids = torch.cat(all_input_ids, dim=0).to(torch.long)
         labels = torch.cat(all_labels, dim=0).to(torch.long)
         attention_mask = (input_ids > -1000000).to(torch.long)
 
-        # 处理 laser_tokens
+        # Process laser_tokens
         laser_tokens = [torch.tensor(group, dtype=torch.int) for group in laser_token_idxs_list]
 
-        # 构建返回字典
+        # Build return dictionary
         data_dict = dict(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -296,9 +296,9 @@ class IterableSupervisedDatasetLaser(Dataset):
         image_grid_thw: torch.Tensor
     ) -> List[List[int]]:
         """
-        将边界框转换为视觉 token 索引。
+        Convert bounding boxes to visual token indices.
 
-        仅适用于 Qwen-VL 系列模型。
+        Only applicable to Qwen-VL series models.
         """
         _, h, w = image_grid_thw[0].tolist()
         token_idxs = []
@@ -306,13 +306,13 @@ class IterableSupervisedDatasetLaser(Dataset):
         for bbox in bboxes:
             x0, y0, x1, y1 = bbox
 
-            # 缩放到 14x14 网格
+            # Scale to 14x14 grid
             x0_grid = max(0, min(int(np.floor(x0 * w)), w - 1))
             x1_grid = max(0, min(int(np.ceil(x1 * w)), w))
             y0_grid = max(0, min(int(np.floor(y0 * h)), h - 1))
             y1_grid = max(0, min(int(np.ceil(y1 * h)), h))
 
-            # 映射到 28x28 网格
+            # Map to 28x28 grid
             x0_token = x0_grid // 2
             x1_token = (x1_grid + 1) // 2
             y0_token = y0_grid // 2
@@ -331,7 +331,7 @@ class IterableSupervisedDatasetLaser(Dataset):
 
     def reasoning_chain_to_token_idxs(self, reasoning_chain: List[str]) -> List[List[int]]:
         """
-        将 reasoning_chain 转换为 token 索引列表 (DWAL 模式)。
+        Convert reasoning_chain to token index list (DWAL mode).
         """
         text = " ".join(reasoning_chain)
         token_ids = self.processor.tokenizer(text, add_special_tokens=False)["input_ids"]

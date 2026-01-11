@@ -1,23 +1,23 @@
 """
 Dynamic Batch Dataset for LASER Training
 
-基于 "矩形显存面积" 约束的动态批处理策略：
+Dynamic batching strategy based on "rectangular memory area" constraint:
     (batch_size × max_seq_len) <= TOKEN_CAP
 
-核心设计原则：
-1. Buffer 只操作索引和长度，不存储完整数据
-2. 长度必须预计算（通过 lengths_path 加载）
-3. 数据只在最终 yield 时加载一次
-4. 支持 Resume 时跳过已训练的 batches
+Core design principles:
+1. Buffer only operates on indices and lengths, does not store full data
+2. Lengths must be precomputed (loaded via lengths_path)
+3. Data is loaded only once at final yield
+4. Supports skipping already trained batches during Resume
 
-流程:
-1. 宏观缓冲: 随机 shuffle 所有索引
-2. 分片: 按 rank/worker 划分索引
-3. 微观排序: 按长度排序
-4. 贪心封包: 双约束 (TOKEN_CAP + MAX_BS)
-5. Batch 打乱: shuffle batch 顺序
-6. 跳过已训练的 batches (Resume 时)
-7. 加载数据: yield 时才加载真实数据
+Flow:
+1. Macro buffer: randomly shuffle all indices
+2. Sharding: partition indices by rank/worker
+3. Micro sorting: sort by length
+4. Greedy packing: dual constraints (TOKEN_CAP + MAX_BS)
+5. Batch shuffle: shuffle batch order
+6. Skip already trained batches (during Resume)
+7. Load data: load real data only at yield time
 """
 
 import json
@@ -56,25 +56,25 @@ def get_rank() -> int:
 
 class DynamicBatchDataset(IterableDataset):
     """
-    动态批处理的 IterableDataset。
+    IterableDataset for dynamic batching.
 
-    核心特性：
-    - 所有排序/打包操作只在 (idx, length) 对上进行
-    - 数据只在 yield 时加载一次
-    - 必须提供预计算的长度文件
-    - 支持 Resume 时跳过已训练的 batches
+    Core features:
+    - All sorting/packing operations only work on (idx, length) pairs
+    - Data is loaded only once at yield time
+    - Precomputed lengths file must be provided
+    - Supports skipping already trained batches during Resume
 
     Args:
-        base_dataset: 底层 Map-style Dataset (支持 __getitem__ 和 __len__)
-        token_cap: 显存硬约束 - batch_size × max_len <= token_cap
-        max_batch_size: 数量硬约束 - 每个 batch 最多样本数
-        lengths_path: 预计算长度 JSON 文件路径 (必须提供)
-        seed: 随机种子
-        data_rank: 当前进程 rank (分布式训练)
-        data_world_size: 总进程数
-        num_workers: DataLoader 的 worker 数量 (用于预计算跳过量)
-        resume_step: Resume 时的 global_step (0 表示不跳过)
-        gradient_accumulation_steps: 梯度累积步数 (用于计算实际消耗的 batch 数)
+        base_dataset: Underlying Map-style Dataset (supports __getitem__ and __len__)
+        token_cap: Memory hard constraint - batch_size × max_len <= token_cap
+        max_batch_size: Count hard constraint - max samples per batch
+        lengths_path: Precomputed lengths JSON file path (required)
+        seed: Random seed
+        data_rank: Current process rank (distributed training)
+        data_world_size: Total number of processes
+        num_workers: Number of DataLoader workers (for precomputing skip count)
+        resume_step: global_step during Resume (0 means no skipping)
+        gradient_accumulation_steps: Gradient accumulation steps (for calculating actual batches consumed)
     """
 
     def __init__(
@@ -97,10 +97,10 @@ class DynamicBatchDataset(IterableDataset):
         self.seed = seed
         self.data_rank = data_rank
         self.data_world_size = data_world_size
-        self.num_workers = max(1, num_workers)  # 至少 1
+        self.num_workers = max(1, num_workers)  # At least 1
         self.total_samples = len(base_dataset)
 
-        # 加载预计算长度 (必须存在)
+        # Load precomputed lengths (must exist)
         if not lengths_path or not os.path.exists(lengths_path):
             raise ValueError(
                 f"lengths_path is required and must exist. Got: {lengths_path}\n"
@@ -113,10 +113,10 @@ class DynamicBatchDataset(IterableDataset):
         with open(lengths_path, 'r') as f:
             lengths_dict = json.load(f)
 
-        # JSON keys 是字符串，转成 int
+        # JSON keys are strings, convert to int
         self.lengths = {int(k): v for k, v in lengths_dict.items()}
 
-        # 验证长度数量匹配
+        # Verify length count matches
         if len(self.lengths) != self.total_samples:
             logger.warning(
                 f"Length mismatch: lengths file has {len(self.lengths)} entries, "
@@ -124,10 +124,10 @@ class DynamicBatchDataset(IterableDataset):
                 f"This may cause issues."
             )
 
-        # 计算每个 worker 需要跳过的 batch 数 (用于 Resume)
+        # Calculate batches to skip per worker (for Resume)
         self.skip_batches_per_worker: Dict[int, int] = {}
         if resume_step > 0:
-            # 每个 rank 消耗的 batch 数 = global_step * gradient_accumulation_steps
+            # Batches consumed per rank = global_step * gradient_accumulation_steps
             batches_consumed_per_rank = resume_step * gradient_accumulation_steps
             self._compute_skip_for_resume(batches_consumed_per_rank)
 
@@ -145,24 +145,24 @@ class DynamicBatchDataset(IterableDataset):
 
     def _compute_skip_for_resume(self, batches_consumed_per_rank: int):
         """
-        计算每个 worker 需要跳过的 batch 数。
+        Calculate batches to skip per worker.
 
-        原理：
-        1. 预计算当前 rank 下每个 worker 会生成多少 batches
-        2. 模拟 DataLoader 的 round-robin 取数逻辑
-        3. 计算出每个 worker 已经贡献了多少 batches
+        Principle:
+        1. Precompute how many batches each worker under current rank will generate
+        2. Simulate DataLoader's round-robin fetching logic
+        3. Calculate how many batches each worker has already contributed
 
         Args:
-            batches_consumed_per_rank: 当前 rank 已消耗的 batch 数
+            batches_consumed_per_rank: Batches already consumed by current rank
         """
-        # 预计算当前 rank 下每个 worker 的 batch 数
+        # Precompute batch count for each worker under current rank
         batches_per_worker = self._precompute_batches_for_rank()
 
         if get_rank() == 0:
             logger.info(f"[Resume] Precomputed batches per worker: {batches_per_worker}")
             logger.info(f"[Resume] Batches consumed per rank: {batches_consumed_per_rank}")
 
-        # 模拟 round-robin 取数，计算每个 worker 贡献了多少
+        # Simulate round-robin fetching, calculate how many each worker contributed
         self.skip_batches_per_worker = self._simulate_round_robin(
             batches_consumed_per_rank,
             batches_per_worker
@@ -170,39 +170,39 @@ class DynamicBatchDataset(IterableDataset):
 
     def _precompute_batches_for_rank(self) -> Dict[int, int]:
         """
-        预计算当前 rank 下每个 worker 会生成多少 batches。
+        Precompute how many batches each worker under current rank will generate.
 
-        使用与 __iter__ 相同的逻辑，但只计算数量，不加载数据。
+        Uses the same logic as __iter__, but only counts, does not load data.
 
         Returns:
             {local_worker_id: batch_count}
         """
         batches_per_worker = {}
 
-        # 全局 RNG (与 __iter__ 保持一致)
+        # Global RNG (consistent with __iter__)
         global_rng = np.random.default_rng(seed=self.seed)
         all_indices = list(range(self.total_samples))
         global_rng.shuffle(all_indices)
 
-        # 计算当前 rank 下每个 worker 的 batch 数
+        # Calculate batch count for each worker under current rank
         for local_worker_id in range(self.num_workers):
             global_worker_id = self.data_rank * self.num_workers + local_worker_id
             total_workers = self.data_world_size * self.num_workers
 
-            # 分片
+            # Sharding
             my_indices = all_indices[global_worker_id::total_workers]
 
-            # 获取长度，过滤无效样本
+            # Get lengths, filter invalid samples
             indices_with_lengths = []
             for idx in my_indices:
                 length = self.lengths.get(idx, 0)
                 if length > 0:
                     indices_with_lengths.append((idx, length))
 
-            # 排序
+            # Sort
             indices_with_lengths.sort(key=lambda x: x[1])
 
-            # 封包
+            # Packing
             batches = self._greedy_pack_indices(indices_with_lengths)
             batches_per_worker[local_worker_id] = len(batches)
 
@@ -214,17 +214,17 @@ class DynamicBatchDataset(IterableDataset):
         batches_per_worker: Dict[int, int]
     ) -> Dict[int, int]:
         """
-        模拟 DataLoader 的 round-robin 取数逻辑。
+        Simulate DataLoader's round-robin fetching logic.
 
-        PyTorch DataLoader 对 IterableDataset + num_workers > 0 使用 round-robin:
-        依次从 worker 0, 1, 2, ..., 0, 1, 2, ... 取数据。
+        PyTorch DataLoader uses round-robin for IterableDataset + num_workers > 0:
+        fetches from worker 0, 1, 2, ..., 0, 1, 2, ... in sequence.
 
         Args:
-            total_consumed: 总共消耗的 batch 数
-            batches_per_worker: 每个 worker 的 batch 总数
+            total_consumed: Total batches consumed
+            batches_per_worker: Total batch count for each worker
 
         Returns:
-            {local_worker_id: skip_count}  每个 worker 需要跳过的数量
+            {local_worker_id: skip_count}  Number of batches each worker needs to skip
         """
         worker_ids = sorted(batches_per_worker.keys())
         remaining = {wid: batches_per_worker[wid] for wid in worker_ids}
@@ -243,7 +243,7 @@ class DynamicBatchDataset(IterableDataset):
                     made_progress = True
 
             if not made_progress:
-                # 所有 worker 都用完了
+                # All workers exhausted
                 if get_rank() == 0:
                     logger.warning(
                         f"[Resume] All workers exhausted before reaching target. "
@@ -258,17 +258,17 @@ class DynamicBatchDataset(IterableDataset):
         sorted_indices_with_lengths: List[tuple]
     ) -> List[List[int]]:
         """
-        贪心封包算法 - 双约束。
+        Greedy packing algorithm - dual constraints.
 
-        约束:
-        1. 显存约束: (count + 1) × new_max_len <= TOKEN_CAP
-        2. 数量约束: count + 1 <= MAX_BS
+        Constraints:
+        1. Memory constraint: (count + 1) × new_max_len <= TOKEN_CAP
+        2. Count constraint: count + 1 <= MAX_BS
 
         Args:
-            sorted_indices_with_lengths: [(idx, length), ...] 按长度升序排列
+            sorted_indices_with_lengths: [(idx, length), ...] sorted by length ascending
 
         Returns:
-            [[idx1, idx2, ...], [idx3, idx4, ...], ...]  索引 batch 列表
+            [[idx1, idx2, ...], [idx3, idx4, ...], ...]  List of index batches
         """
         if not sorted_indices_with_lengths:
             return []
@@ -278,29 +278,29 @@ class DynamicBatchDataset(IterableDataset):
         current_max_len = 0
 
         for idx, length in sorted_indices_with_lengths:
-            # 跳过无效样本
+            # Skip invalid samples
             if length <= 0:
                 continue
 
             new_max_len = max(current_max_len, length)
             new_count = len(current_batch) + 1
 
-            # 双约束检查
+            # Dual constraint check
             memory_ok = (new_count * new_max_len) <= self.token_cap
             count_ok = new_count <= self.max_batch_size
 
             if memory_ok and count_ok:
-                # 可以加入当前 batch
+                # Can add to current batch
                 current_batch.append(idx)
                 current_max_len = new_max_len
             else:
-                # 开始新 batch
+                # Start new batch
                 if current_batch:
                     batches.append(current_batch)
                 current_batch = [idx]
                 current_max_len = length
 
-        # 别忘了最后一个 batch
+        # Don't forget the last batch
         if current_batch:
             batches.append(current_batch)
 
@@ -308,22 +308,22 @@ class DynamicBatchDataset(IterableDataset):
 
     def __iter__(self):
         """
-        迭代生成动态大小的 batch（无限循环模式）。
+        Iterate and generate dynamic-size batches (infinite loop mode).
 
-        流程:
-        1. 获取 worker 信息
-        2. 无限循环:
-           a. 获取所有索引，shuffle (宏观随机性，每 epoch 不同)
-           b. 按 rank/worker 分片
-           c. 获取长度，过滤无效样本
-           d. 按长度排序 (微观排序)
-           e. 贪心封包
+        Flow:
+        1. Get worker info
+        2. Infinite loop:
+           a. Get all indices, shuffle (macro randomness, different per epoch)
+           b. Shard by rank/worker
+           c. Get lengths, filter invalid samples
+           d. Sort by length (micro sorting)
+           e. Greedy packing
            f. Shuffle batches
-           g. 跳过已训练的 batches (仅第一个 epoch)
-           h. 加载数据并 yield
-           i. epoch 结束，打印日志，继续下一轮
+           g. Skip already trained batches (first epoch only)
+           h. Load data and yield
+           i. Epoch ends, print log, continue to next round
         """
-        # === Step 1: 获取 worker 信息 ===
+        # === Step 1: Get worker info ===
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is not None:
             worker_id = worker_info.id
@@ -332,11 +332,11 @@ class DynamicBatchDataset(IterableDataset):
             worker_id = 0
             num_workers = 1
 
-        # 组合 distributed rank 和 worker id
+        # Combine distributed rank and worker id
         global_worker_id = self.data_rank * num_workers + worker_id
         total_workers = self.data_world_size * num_workers
 
-        # 跳过已训练的 batches (仅第一个 epoch 需要)
+        # Skip already trained batches (first epoch only)
         skip_count = self.skip_batches_per_worker.get(worker_id, 0)
         if skip_count > 0 and global_worker_id == 0:
             logger.info(
@@ -344,25 +344,25 @@ class DynamicBatchDataset(IterableDataset):
                 f"will skip first {skip_count} batches (resume)"
             )
 
-        # 全局计数器
+        # Global counters
         total_batches_yielded_global = 0
         epoch = 0
 
-        # === 无限循环 ===
+        # === Infinite loop ===
         while True:
-            # 每个 epoch 使用不同的 seed，保证跨 epoch 的随机性
+            # Use different seed per epoch to ensure cross-epoch randomness
             epoch_seed = self.seed + epoch * 1000
 
-            # 全局 RNG: 所有 worker 使用相同 seed，保证 shuffle 结果一致
+            # Global RNG: all workers use same seed to ensure consistent shuffle results
             global_rng = np.random.default_rng(seed=epoch_seed)
-            # Worker-specific RNG: 用于 batch 顺序 shuffle，增加随机性
+            # Worker-specific RNG: for batch order shuffle, adds randomness
             worker_rng = np.random.default_rng(seed=epoch_seed + global_worker_id)
 
-            # === Step 2: 获取所有索引并 shuffle (全局一致) ===
+            # === Step 2: Get all indices and shuffle (globally consistent) ===
             all_indices = list(range(self.total_samples))
             global_rng.shuffle(all_indices)
 
-            # === Step 3: 按 worker 分片 ===
+            # === Step 3: Shard by worker ===
             my_indices = all_indices[global_worker_id::total_workers]
 
             if global_worker_id == 0 and epoch == 0:
@@ -371,7 +371,7 @@ class DynamicBatchDataset(IterableDataset):
                     f"processing {len(my_indices)}/{self.total_samples} samples"
                 )
 
-            # === Step 4: 获取长度，过滤无效样本 ===
+            # === Step 4: Get lengths, filter invalid samples ===
             indices_with_lengths = []
             for idx in my_indices:
                 length = self.lengths.get(idx, 0)
@@ -384,10 +384,10 @@ class DynamicBatchDataset(IterableDataset):
                     f"{len(indices_with_lengths)} valid samples"
                 )
 
-            # === Step 5: 按长度排序 ===
+            # === Step 5: Sort by length ===
             indices_with_lengths.sort(key=lambda x: x[1])
 
-            # === Step 6: 贪心封包 ===
+            # === Step 6: Greedy packing ===
             index_batches = self._greedy_pack_indices(indices_with_lengths)
 
             if global_worker_id == 0 and epoch == 0:
@@ -396,15 +396,15 @@ class DynamicBatchDataset(IterableDataset):
                     f"packed into {len(index_batches)} batches"
                 )
 
-            # === Step 7: Shuffle batches (worker-specific 顺序) ===
+            # === Step 7: Shuffle batches (worker-specific order) ===
             worker_rng.shuffle(index_batches)
 
-            # === Step 8: 加载数据并 yield ===
+            # === Step 8: Load data and yield ===
             epoch_batches_yielded = 0
             epoch_batches_skipped = 0
 
             for batch_idx, idx_batch in enumerate(index_batches):
-                # 跳过已训练的 batches (仅第一个 epoch)
+                # Skip already trained batches (first epoch only)
                 if epoch == 0 and batch_idx < skip_count:
                     epoch_batches_skipped += 1
                     continue
@@ -414,7 +414,7 @@ class DynamicBatchDataset(IterableDataset):
                     try:
                         sample = self.base_dataset[idx]
                         if sample is not None:
-                            sample['_idx'] = idx  # 添加索引用于调试
+                            sample['_idx'] = idx  # Add index for debugging
                             batch.append(sample)
                     except Exception as e:
                         logger.warning(f"[DynamicBatch] Failed to load sample {idx}: {e}")
@@ -425,7 +425,7 @@ class DynamicBatchDataset(IterableDataset):
                     total_batches_yielded_global += 1
                     yield batch
 
-            # === Epoch 结束，打印日志 ===
+            # === Epoch ends, print log ===
             if global_worker_id == 0:
                 logger.info(
                     f"[DynamicBatch] Worker {global_worker_id}: "
@@ -445,14 +445,14 @@ def make_dynamic_batch_data_module_laser(
     resume_step: int = 0,
 ):
     """
-    创建动态批处理的数据模块。
+    Create dynamic batch data module.
 
     Args:
-        model_id: 模型标识
+        model_id: Model identifier
         processor: Tokenizer/Processor
-        data_args: 数据参数
-        training_args: 训练参数
-        resume_step: Resume 时的 global_step (0 表示不跳过)
+        data_args: Data arguments
+        training_args: Training arguments
+        resume_step: global_step during Resume (0 means no skipping)
 
     Returns:
         dict: {train_dataset, eval_dataset, data_collator}, total_data_len
@@ -460,7 +460,7 @@ def make_dynamic_batch_data_module_laser(
     from .laser_sft_dataset_packed import IterableSupervisedDatasetLaser
     from .dynamic_batch_collator import DynamicBatchCollator
 
-    # 获取分布式信息
+    # Get distributed info
     if is_dist_avail_and_initialized():
         data_rank = dist.get_rank()
         data_world_size = dist.get_world_size()
@@ -468,10 +468,10 @@ def make_dynamic_batch_data_module_laser(
         data_rank = 0
         data_world_size = 1
 
-    # 加载 meta_data
+    # Load meta_data
     meta_data = json.load(open(data_args.data_path))
 
-    # 为每个数据源创建 Dataset
+    # Create Dataset for each data source
     datasets = []
     total_data_len = 0
 
@@ -490,7 +490,7 @@ def make_dynamic_batch_data_module_laser(
         if get_rank() == 0:
             logger.info(f"Loaded {len(ds)} samples from {meta['ds_name']}")
 
-    # 合并成 ConcatDataset
+    # Merge into ConcatDataset
     if len(datasets) == 1:
         base_dataset = datasets[0]
     else:
@@ -499,10 +499,10 @@ def make_dynamic_batch_data_module_laser(
     if get_rank() == 0:
         logger.info(f"Total samples: {total_data_len}")
 
-    # 获取 lengths_path
+    # Get lengths_path
     lengths_path = getattr(data_args, 'lengths_path', None)
 
-    # 获取 num_workers 和 gradient_accumulation_steps
+    # Get num_workers and gradient_accumulation_steps
     num_workers = getattr(training_args, 'dataloader_num_workers', 0)
     if num_workers == 0:
         num_workers = 1  # DataLoader with num_workers=0 runs in main process
@@ -515,7 +515,7 @@ def make_dynamic_batch_data_module_laser(
             f"gradient_accumulation_steps={gradient_accumulation_steps}"
         )
 
-    # 创建 DynamicBatchDataset
+    # Create DynamicBatchDataset
     dynamic_dataset = DynamicBatchDataset(
         base_dataset=base_dataset,
         token_cap=training_args.dynamic_batch_token_cap,
@@ -529,10 +529,10 @@ def make_dynamic_batch_data_module_laser(
         gradient_accumulation_steps=gradient_accumulation_steps,
     )
 
-    # 创建 Collator
+    # Create Collator
     data_collator = DynamicBatchCollator(
         pad_token_id=processor.tokenizer.pad_token_id,
-        pad_to_multiple_of=8,  # Tensor Core 优化
+        pad_to_multiple_of=8,  # Tensor Core optimization
     )
 
     if get_rank() == 0:

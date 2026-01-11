@@ -21,13 +21,13 @@ local_rank = None
 
 def get_resume_global_step(checkpoint_path: str) -> int:
     """
-    从 checkpoint 读取 global_step。
+    Read global_step from checkpoint.
 
     Args:
-        checkpoint_path: checkpoint 目录路径
+        checkpoint_path: checkpoint directory path
 
     Returns:
-        global_step (int)，如果读取失败返回 0
+        global_step (int), returns 0 if reading fails
     """
     if not checkpoint_path:
         return 0
@@ -171,7 +171,7 @@ def train():
         Data module configurations
         use data packing for faster training due to the random input lengths of LASER
     '''
-    # 获取 resume_step (用于动态 batch 跳过已训练数据)
+    # Get resume_step (for dynamic batch to skip already trained data)
     resume_step = 0
     if training_args.resume_from_checkpoint:
         resume_step = get_resume_global_step(training_args.resume_from_checkpoint)

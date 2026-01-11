@@ -15,6 +15,6 @@ def Qwen2_5_VisionPatchEmbedFp32Forward(self, hidden_states: torch.Tensor) -> to
         hidden_states = hidden_states.view(
             -1, self.in_channels, self.temporal_patch_size, self.patch_size, self.patch_size
         )
-        # 直接使用目标数据类型，避免 autocast 在 AMD GPU 上的问题
+        # Use target dtype directly to avoid autocast issues on AMD GPU
         hidden_states = self.proj(hidden_states.to(dtype=target_dtype)).view(-1, self.embed_dim)
         return hidden_states
