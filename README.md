@@ -25,11 +25,11 @@ Official implementation of **Laser** (Latent Superposition for Effective Visual 
 ## Installation
 
 ```bash
-git clone https://github.com/ybb6/Laser.git
+git clone https://github.com/ybb6/laser.git
 cd Laser
 pip install -r requirements.txt
 
-# Optional: Flash Attention 2 (recommended for faster training/inference)
+# Optional: Flash Attention 2
 pip install flash-attn --no-build-isolation
 ```
 
