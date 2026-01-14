@@ -1,6 +1,6 @@
 # Forest Before Trees: Latent Superposition for Efficient Visual Reasoning
 
-[![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/[TODO])
+[![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](http://arxiv.org/abs/2601.06803)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 Official implementation of **Laser** (Latent Superposition for Effective Visual Reasoning). Laser enables vision-language models to perform implicit reasoning in continuous latent space, prioritizing global understanding ("Forest") before detailed processing ("Trees").
@@ -19,13 +19,13 @@ Official implementation of **Laser** (Latent Superposition for Effective Visual 
 - [Quick Start](#quick-start)
 - [Training](#training)
 - [Evaluation](#evaluation)
-- [Model](#model-zoo)
+- [Model](#model)
 - [Citation](#citation)
 
 ## Installation
 
 ```bash
-git clone https://github.com/[YOUR_USERNAME]/Laser.git
+git clone https://github.com/ybb6/Laser.git
 cd Laser
 pip install -r requirements.txt
 
@@ -133,11 +133,11 @@ We will release the pre-trained weights upon acceptance or shortly after the arX
 If you find our work useful, please consider citing:
 
 ```bibtex
-@article{laser2025forest,
-  title={Laser: Latent Superposition for Efficient Visual Reasoning},
-  author={[Author Names TODO]},
-  journal={arXiv preprint arXiv:[TODO]},
-  year={2025}
+@article{laser2026forest,
+  title={Forest Before Trees: Latent Superposition for Efficient Visual Reasoning},
+  author={Wang, Yubo and Zhang, Juntian and Wu, Yichen and Lin, Yankai and Lukas, Nils and Liu, Yuhan},
+  journal={arXiv preprint arXiv:2601.06803},
+  year={2026}
 }
 ```
 
