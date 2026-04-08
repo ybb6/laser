@@ -1,17 +1,17 @@
 # Forest Before Trees: Latent Superposition for Efficient Visual Reasoning
 
 [![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](http://arxiv.org/abs/2601.06803)
+[![Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Dataset-blue)](https://huggingface.co/datasets/wybb/Laser-ScanPath)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 Official implementation of **Laser** (Latent Superposition for Effective Visual Reasoning). Laser enables vision-language models to perform implicit reasoning in continuous latent space, prioritizing global understanding ("Forest") before detailed processing ("Trees").
 
-> **Note:** Code is released for reference; weights and data will be available soon.
+> **Note:** Training data and code are now available!
 
-## 📢 News
+## 📢 News 
 
-- **[2025/01]** Code release for Laser.
-- **[Coming Soon]** Pre-trained checkpoints (Laser-7B) release.
-- **[Coming Soon]** Training data release.
+- **[2026/04]** 🚀 Training data ([ScanPath](https://huggingface.co/datasets/wybb/Laser-ScanPath)) released!
+- **[2026/01]** Code release for Laser.
 
 ## Table of Contents
 
@@ -120,12 +120,6 @@ We will release the pre-trained weights upon acceptance or shortly after the arX
 | Model | Base Model | Status | Download |
 |-------|------------|--------|----------|
 | **Laser-7B** | Qwen2.5-VL-7B-Instruct | *Coming Soon* | - |
-
-### Training Data
-
-| Dataset | Description | Status | Download |
-|---------|-------------|--------|----------|
-| ScanPath | Curated reasoning instruction data | *Coming Soon* | - |
 
 
 ## Citation
