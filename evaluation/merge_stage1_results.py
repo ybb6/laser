@@ -7,11 +7,11 @@ import json
 import argparse
 from collections import defaultdict
 
-# Import accuracy functions from evaluation_local to avoid code duplication
-from evaluation_local import accuracy_reward, accuracy_reward_yesno
+# Import accuracy functions from bench_func
+from bench_func import accuracy_reward, accuracy_reward_yesno, accuracy_reward_mmvp
 
 
-def find_result_dirs(benchmark, checkpoint, strategy, output_dir="evaluation/results", max_laser_steps=None, repetition_exit=False):
+def find_result_dirs(benchmark, checkpoint, strategy, output_dir="evaluation/results", max_laser_steps=None, add_instruction=False, repetition_exit=False):
     """Find all result directories for a given benchmark and checkpoint
 
     Args:
@@ -37,6 +37,9 @@ def find_result_dirs(benchmark, checkpoint, strategy, output_dir="evaluation/res
         strategy_dir_name = f"decoding_by_{strategy}_max{max_laser_steps}"
     else:
         strategy_dir_name = f"decoding_by_{strategy}"
+
+    if add_instruction:
+        strategy_dir_name += "_with_inst"
 
     # Append repetition_exit suffix
     if repetition_exit:
@@ -66,7 +69,7 @@ def find_result_dirs(benchmark, checkpoint, strategy, output_dir="evaluation/res
     return None
 
 
-def merge_results(benchmark, checkpoint, strategy, num_ranks, steps_list, output_dir="evaluation/results", max_laser_steps=None, repetition_exit=False):
+def merge_results(benchmark, checkpoint, strategy, num_ranks, steps_list, output_dir="evaluation/results", max_laser_steps=None, add_instruction=False, repetition_exit=False):
     """Merge results from multiple parallel evaluation processes
 
     Args:
@@ -77,12 +80,14 @@ def merge_results(benchmark, checkpoint, strategy, num_ranks, steps_list, output
     print(f"Merging results for benchmark: {benchmark}")
     if strategy == "dynamic" and max_laser_steps is not None:
         print(f"Strategy: {strategy} (max_laser_steps={max_laser_steps})")
+    if add_instruction:
+        print("Add instruction: enabled")
     if repetition_exit:
         print(f"Repetition exit: enabled")
     print(f"{'='*80}")
 
     # Find result directory
-    result_dir = find_result_dirs(benchmark, checkpoint, strategy, output_dir, max_laser_steps, repetition_exit)
+    result_dir = find_result_dirs(benchmark, checkpoint, strategy, output_dir, max_laser_steps, add_instruction, repetition_exit)
     if not result_dir:
         print(f"ERROR: Result directory not found for {benchmark}/{checkpoint}")
         return False
@@ -150,6 +155,9 @@ def merge_results(benchmark, checkpoint, strategy, num_ranks, steps_list, output
                 # Use appropriate accuracy function based on benchmark
                 if benchmark in ['hallusionbench', 'mme']:
                     is_correct = accuracy_reward_yesno(prediction, label)
+                elif benchmark == 'mmvp':
+                    question = res.get('question', '')
+                    is_correct = accuracy_reward_mmvp(prediction, label, question)
                 elif benchmark == 'vsr_filtered':
                     is_correct = accuracy_reward_yesno_relaxed(prediction, label)
                 elif benchmark == 'cub_filtered':
@@ -199,7 +207,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--benchmark",
         required=True,
-        choices=['blink', 'vstar', 'mmvp', 'realworldqa', 'mmstar', 'seedbench2plus', 'hallusionbench', 'mme', 'hrbench', 'vsr_filtered', 'cub_filtered', 'muirbench', 'visulogic', 'geometry3k'],
+        choices=['blink', 'mmvp', 'mmstar', 'seedbench2plus', 'hallusionbench', 'hrbench'],
         help="Benchmark name"
     )
     parser.add_argument(
@@ -239,6 +247,12 @@ if __name__ == "__main__":
         help="Output directory for results (default: evaluation/results)"
     )
     parser.add_argument(
+        "--add_instruction",
+        action="store_true",
+        default=False,
+        help="Look for results generated with benchmark-specific instruction prompts (_with_inst suffix)"
+    )
+    parser.add_argument(
         "--repetition_exit",
         action="store_true",
         default=False,
@@ -255,6 +269,7 @@ if __name__ == "__main__":
         args.steps,
         args.output_dir,
         args.max_laser_steps,
+        args.add_instruction,
         args.repetition_exit
     )
 

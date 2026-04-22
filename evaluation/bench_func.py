@@ -35,6 +35,22 @@ DEFAULT_BLINK_CONFIGS = ['Counting', 'IQ_Test', 'Jigsaw', 'Relative_Reflectance'
 
 # ==== Helper Functions ====
 
+def get_task_instruction(bench_name, add_instruction=False):
+    """Get task-specific instruction to append to the benchmark question."""
+    if not add_instruction:
+        return ""
+
+    instruction_map = {
+        "blink": "Answer with the option's letter from the given choices directly. Give your final answer in <answer>X</answer> format.",
+        "mmvp": "\nAnswer with the option's letter from the given choices directly.",
+        "mmstar": "\nAnswer with the option's letter from the given choices directly.",
+        "seedbench2plus": "\nAnswer with the option's letter from the given choices directly.",
+        "hallusionbench": "\nPlease answer Yes or No.",
+        "hrbench": "\nAnswer with the option's letter from the given choices directly.",
+    }
+
+    return instruction_map.get(bench_name, "")
+
 def accuracy_reward(response: str, ground_truth: str) -> float:
     """Extract answer from response and compare with ground truth"""
     given_answer = response.split('<answer>')[-1]
@@ -88,6 +104,38 @@ def accuracy_reward_yesno(response: str, ground_truth: str) -> bool:
     gt = int(ground_truth) if str(ground_truth).isdigit() else (1 if str(ground_truth).lower() == 'yes' else 0)
     return extracted == gt
 
+def accuracy_reward_mmvp(response: str, ground_truth: str, question: str) -> bool:
+    """MMVP accuracy: handles Yes/No answers mapped to (a)/(b) via question options"""
+    given_answer = response.split('<answer>')[-1]
+    given_answer = given_answer.split('</answer')[0].strip()
+
+    # First try normal extraction (standalone A-D letter)
+    words = given_answer.split()
+    last_words = words[-10:] if len(words) > 10 else words
+    extracted = None
+    for word in reversed(last_words):
+        match = re.search(r'(?<![a-zA-Z])([A-Da-d])(?![a-zA-Z])', word)
+        if match:
+            extracted = match.group(1).upper()
+            break
+
+    # If no letter found, check for Yes/No and map to a/b via question options
+    if extracted is None:
+        answer_lower = given_answer.lower().strip()
+        if answer_lower in ['yes', 'no']:
+            if '(a) Yes' in question or '(a) yes' in question:
+                extracted = 'A' if answer_lower == 'yes' else 'B'
+            elif '(b) Yes' in question or '(b) yes' in question:
+                extracted = 'B' if answer_lower == 'yes' else 'A'
+
+    # Fallback to first char
+    if extracted is None:
+        cleaned = re.sub(r'[^a-zA-Z0-9]', '', given_answer)
+        extracted = cleaned[0].upper() if cleaned else ""
+
+    ground_truth = re.sub(r'[^a-zA-Z0-9]', '', ground_truth).upper()
+    return extracted == ground_truth
+
 def shard_data(data, rank=0, world_size=1, seed=42):
     """Shard data across multiple processes"""
     if world_size <= 1:
@@ -124,7 +172,7 @@ def run_inference(model, processor, img_path, text, steps, decoding_strategy, ma
 
 # ==== Evaluation Functions ====
 
-def evaluate_blink(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, blink_configs=None, repetition_exit=False):
+def evaluate_blink(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, blink_configs=None, add_instruction=False, repetition_exit=False):
     """Evaluate on BLINK benchmark
 
     Args:
@@ -139,9 +187,11 @@ def evaluate_blink(model, processor, output_dir, decoding_strategy="steps", step
     print(f"\n{'='*80}")
     print(f"Evaluating BLINK with decoding strategy: {decoding_strategy}")
     print(f"BLINK configs: {blink_configs} ({len(blink_configs)}/14)")
+    print(f"Add instruction: {add_instruction}")
     print(f"{'='*80}\n")
 
     os.makedirs(output_dir, exist_ok=True)
+    task_instruction = get_task_instruction("blink", add_instruction)
 
     # Load BLINK dataset (auto-downloads from HuggingFace)
     configs = blink_configs
@@ -173,7 +223,7 @@ def evaluate_blink(model, processor, output_dir, decoding_strategy="steps", step
                 if k in dat and dat[k] is not None:
                     images.append(dat[k])
 
-            question = dat['question'] + "\nOptions:\n" + option_string
+            question = dat['question'] + "\nOptions:\n" + option_string + task_instruction
             buffer = {
                 "question_id": idx,
                 "image": images,
@@ -278,7 +328,7 @@ def evaluate_blink(model, processor, output_dir, decoding_strategy="steps", step
     print(f"{'='*80}\n")
 
 
-def evaluate_mmvp(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, repetition_exit=False):
+def evaluate_mmvp(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, add_instruction=False, repetition_exit=False):
     """Evaluate on MMVP benchmark
 
     Args:
@@ -288,9 +338,11 @@ def evaluate_mmvp(model, processor, output_dir, decoding_strategy="steps", step_
 
     print(f"\n{'='*80}")
     print(f"Evaluating MMVP with decoding strategy: {decoding_strategy}")
+    print(f"Add instruction: {add_instruction}")
     print(f"{'='*80}\n")
 
     os.makedirs(output_dir, exist_ok=True)
+    task_instruction = get_task_instruction("mmvp", add_instruction)
 
     # Find MMVP cache directory
     print("Loading MMVP dataset from HuggingFace cache...")
@@ -330,7 +382,7 @@ def evaluate_mmvp(model, processor, output_dir, decoding_strategy="steps", step_
         options = row['Options']
         answer = row['Correct Answer']
 
-        full_query = question + " " + options
+        full_query = question + " " + options + task_instruction
 
         buffer = {
             "question_id": str(img_index),
@@ -366,7 +418,7 @@ def evaluate_mmvp(model, processor, output_dir, decoding_strategy="steps", step_
                 result = json.load(f)
 
             for res in result:
-                if accuracy_reward(res["prediction"][0], res["label"]):
+                if accuracy_reward_mmvp(res["prediction"][0], res["label"], res["question"]):
                     correct += 1
                 total += 1
             step2results_overall[steps] = {"total": total, "correct": correct}
@@ -387,7 +439,7 @@ def evaluate_mmvp(model, processor, output_dir, decoding_strategy="steps", step_
                 }
                 result.append(res)
 
-                if accuracy_reward(outputs[0], dat['label']):
+                if accuracy_reward_mmvp(outputs[0], dat['label'], dat['query']):
                     correct += 1
                 total += 1
 
@@ -402,7 +454,7 @@ def evaluate_mmvp(model, processor, output_dir, decoding_strategy="steps", step_
     print(f"{'='*80}\n")
 
 
-def evaluate_mmstar(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, repetition_exit=False):
+def evaluate_mmstar(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, add_instruction=False, repetition_exit=False):
     """Evaluate on MMStar benchmark (Lin-Chen/MMStar)
 
     Args:
@@ -412,9 +464,11 @@ def evaluate_mmstar(model, processor, output_dir, decoding_strategy="steps", ste
 
     print(f"\n{'='*80}")
     print(f"Evaluating MMStar with decoding strategy: {decoding_strategy}")
+    print(f"Add instruction: {add_instruction}")
     print(f"{'='*80}\n")
 
     os.makedirs(output_dir, exist_ok=True)
+    task_instruction = get_task_instruction("mmstar", add_instruction)
 
     # Load MMStar from HuggingFace
     print("Loading MMStar dataset from HuggingFace...")
@@ -430,7 +484,7 @@ def evaluate_mmstar(model, processor, output_dir, decoding_strategy="steps", ste
         category = dat.get('category', 'unknown')
         l2_category = dat.get('l2_category', 'unknown')
 
-        full_query = question
+        full_query = question + task_instruction
 
         buffer = {
             "question_id": str(dat.get('index', idx)),
@@ -529,7 +583,7 @@ def evaluate_mmstar(model, processor, output_dir, decoding_strategy="steps", ste
     print(f"{'='*80}\n")
 
 
-def evaluate_seedbench2plus(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, repetition_exit=False):
+def evaluate_seedbench2plus(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, add_instruction=False, repetition_exit=False):
     """Evaluate on SEED-Bench-2-Plus benchmark (AILab-CVC/SEED-Bench-2-plus)
 
     Args:
@@ -539,9 +593,11 @@ def evaluate_seedbench2plus(model, processor, output_dir, decoding_strategy="ste
 
     print(f"\n{'='*80}")
     print(f"Evaluating SEED-Bench-2-Plus with decoding strategy: {decoding_strategy}")
+    print(f"Add instruction: {add_instruction}")
     print(f"{'='*80}\n")
 
     os.makedirs(output_dir, exist_ok=True)
+    task_instruction = get_task_instruction("seedbench2plus", add_instruction)
 
     # Find cache directory
     print("Loading SEED-Bench-2-Plus dataset from HuggingFace cache...")
@@ -589,7 +645,7 @@ def evaluate_seedbench2plus(model, processor, output_dir, decoding_strategy="ste
 
         img = Image.open(img_path)
 
-        full_query = question + "\n" + choices
+        full_query = question + "\n" + choices + task_instruction
 
         buffer = {
             "question_id": question_id,
@@ -688,7 +744,7 @@ def evaluate_seedbench2plus(model, processor, output_dir, decoding_strategy="ste
     print(f"{'='*80}\n")
 
 
-def evaluate_hallusionbench(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, repetition_exit=False):
+def evaluate_hallusionbench(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, add_instruction=False, repetition_exit=False):
     """Evaluate on HallusionBench benchmark (lmms-lab/HallusionBench)
 
     Args:
@@ -698,9 +754,11 @@ def evaluate_hallusionbench(model, processor, output_dir, decoding_strategy="ste
 
     print(f"\n{'='*80}")
     print(f"Evaluating HallusionBench with decoding strategy: {decoding_strategy}")
+    print(f"Add instruction: {add_instruction}")
     print(f"{'='*80}\n")
 
     os.makedirs(output_dir, exist_ok=True)
+    task_instruction = get_task_instruction("hallusionbench", add_instruction)
 
     # Load HallusionBench from HuggingFace (only image split, skip non_image)
     print("Loading HallusionBench dataset from HuggingFace...")
@@ -716,7 +774,7 @@ def evaluate_hallusionbench(model, processor, output_dir, decoding_strategy="ste
         category = dat.get('category', 'unknown')
         subcategory = dat.get('subcategory', 'unknown')
 
-        full_query = question
+        full_query = question + task_instruction
 
         buffer = {
             "question_id": str(dat.get('question_id', idx)),
@@ -815,7 +873,7 @@ def evaluate_hallusionbench(model, processor, output_dir, decoding_strategy="ste
     print(f"{'='*80}\n")
 
 
-def evaluate_hrbench(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, repetition_exit=False):
+def evaluate_hrbench(model, processor, output_dir, decoding_strategy="steps", step_list=None, rank=0, world_size=1, seed=42, max_laser_steps=None, add_instruction=False, repetition_exit=False):
     """Evaluate on HRBench 4K benchmark (DreamMr/HR-Bench)
 
     Args:
@@ -825,9 +883,11 @@ def evaluate_hrbench(model, processor, output_dir, decoding_strategy="steps", st
 
     print(f"\n{'='*80}")
     print(f"Evaluating HRBench 4K with decoding strategy: {decoding_strategy}")
+    print(f"Add instruction: {add_instruction}")
     print(f"{'='*80}\n")
 
     os.makedirs(output_dir, exist_ok=True)
+    task_instruction = get_task_instruction("hrbench", add_instruction)
 
     # Find HRBench cache directory and load 4K data
     print("Loading HRBench 4K dataset from HuggingFace cache...")
@@ -872,7 +932,7 @@ def evaluate_hrbench(model, processor, output_dir, decoding_strategy="steps", st
         else:
             img = img_data
 
-        full_query = question + "\n" + options
+        full_query = question + "\n" + options + task_instruction
 
         buffer = {
             "question_id": str(row.get('index', idx)),
@@ -967,3 +1027,79 @@ def evaluate_hrbench(model, processor, output_dir, decoding_strategy="steps", st
             if res:
                 print(category + ',' + ",".join([f"{items*100:.2f}" for items in res]))
     print(f"{'='*80}\n")
+
+
+def accuracy_reward_yesno_relaxed(response: str, ground_truth: str) -> bool:
+    """
+    Relaxed Yes/No accuracy check - tolerant of case, spaces, extra characters.
+    Used for VSR filtered samples.
+    """
+    given_answer = response.split('<answer>')[-1]
+    given_answer = given_answer.split('</answer')[0].strip().lower()
+
+    given_answer = re.sub(r'[^a-z0-9\s]', '', given_answer).strip()
+
+    gt = ground_truth.strip().lower()
+    gt = re.sub(r'[^a-z0-9\s]', '', gt).strip()
+
+    yes_patterns = ['yes', '1', 'true', 'correct', 'right']
+    no_patterns = ['no', '0', 'false', 'incorrect', 'wrong']
+
+    extracted = None
+    for pattern in yes_patterns:
+        if pattern in given_answer:
+            extracted = 'yes'
+            break
+    if extracted is None:
+        for pattern in no_patterns:
+            if pattern in given_answer:
+                extracted = 'no'
+                break
+
+    gt_answer = None
+    for pattern in yes_patterns:
+        if pattern in gt:
+            gt_answer = 'yes'
+            break
+    if gt_answer is None:
+        for pattern in no_patterns:
+            if pattern in gt:
+                gt_answer = 'no'
+                break
+
+    return extracted == gt_answer
+
+
+def accuracy_reward_choice_relaxed(response: str, ground_truth: str) -> bool:
+    """
+    Relaxed choice accuracy check - tolerant of case, spaces, extra characters.
+    Used for CUB filtered samples (A/B choices).
+    """
+    given_answer = response.split('<answer>')[-1]
+    given_answer = given_answer.split('</answer')[0].strip()
+
+    words = given_answer.split()
+    last_words = words[-10:] if len(words) > 10 else words
+
+    extracted = None
+    for word in reversed(last_words):
+        match = re.search(r'(?<![a-zA-Z])([A-Da-d])(?![a-zA-Z])', word)
+        if match:
+            extracted = match.group(1).upper()
+            break
+
+    if extracted is None:
+        cleaned = re.sub(r'[^a-zA-Z]', '', given_answer)
+        if cleaned:
+            first_char = cleaned[0].upper()
+            if first_char in 'ABCD':
+                extracted = first_char
+
+    gt_cleaned = re.sub(r'[^a-zA-Z]', '', ground_truth).upper()
+    gt_letter = None
+    for char in gt_cleaned:
+        if char in 'ABCD':
+            gt_letter = char
+            break
+
+    return extracted == gt_letter

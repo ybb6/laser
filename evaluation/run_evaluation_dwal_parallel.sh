@@ -6,11 +6,16 @@
 # Add project root to Python path
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
+# === MIOpen cache configuration ===
+export MIOPEN_USER_DB_PATH="/vast/users/nils.lukas/yuhan/wyb/lvr/.miopen_cache"
+export MIOPEN_CUSTOM_CACHE_DIR="/vast/users/nils.lukas/yuhan/wyb/lvr/.miopen_cache"
+mkdir -p "$MIOPEN_USER_DB_PATH"
+
 # ============================================
 # Configuration
 # ============================================
 # Checkpoint to evaluate (relative path from project root)
-CHECKPOINT="checkpoints/checkpoint-500"
+CHECKPOINT="dwal_checkpoints/checkpoint-320"
 
 # Benchmarks to run (blink vstar mmvp realworldqa mmstar seedbench2plus hallusionbench mme hrbench muirbench visulogic)
 BENCHMARKS="blink mmvp mmstar seedbench2plus hallusionbench hrbench"
@@ -36,8 +41,11 @@ STRATEGY="dynamic"
 # When reaching this limit, model will force output <|laser_end|> and then <answer>
 MAX_LASER_STEPS="8"
 
+# Add benchmark-specific instruction prompts
+ADD_INSTRUCTION=true
+
 # Number of GPUs to use
-NUM_GPUS=8  # Change this to your desired number of GPUs (4 or 8)
+NUM_GPUS=4  # Change this to your desired number of GPUs (4 or 8)
 
 # Random seed for data sharding
 SEED=42
@@ -54,6 +62,7 @@ echo "BLINK Configs: ${BLINK_CONFIGS:-default (5 configs)}"
 echo "LASER Steps: $STEPS"
 echo "Strategy: $STRATEGY"
 echo "Max LASER Steps (forced exit): $MAX_LASER_STEPS"
+echo "Add Instruction: $ADD_INSTRUCTION"
 echo "Number of GPUs: $NUM_GPUS"
 echo "Output Dir: $OUTPUT_DIR"
 echo "=========================================="
@@ -76,6 +85,11 @@ for GPU_ID in $(seq 0 $((NUM_GPUS-1))); do
         BLINK_CONFIGS_ARG="--blink_configs $BLINK_CONFIGS"
     fi
 
+    ADD_INSTRUCTION_ARG=""
+    if [ "$ADD_INSTRUCTION" = true ]; then
+        ADD_INSTRUCTION_ARG="--add_instruction"
+    fi
+
     CUDA_VISIBLE_DEVICES=$GPU_ID python evaluation/evaluation_local.py \
         --checkpoint $CHECKPOINT \
         --benchmark $BENCHMARKS \
@@ -86,6 +100,7 @@ for GPU_ID in $(seq 0 $((NUM_GPUS-1))); do
         --world_size $NUM_GPUS \
         --output_dir "$OUTPUT_DIR" \
         $BLINK_CONFIGS_ARG \
+        $ADD_INSTRUCTION_ARG \
         > "$LOG_FILE" 2>&1 &
 
     # Store PID
@@ -130,6 +145,11 @@ if [ $FAILED -eq 0 ]; then
                 MAX_LASER_STEPS_ARG="--max_laser_steps $MAX_LASER_STEPS"
             fi
 
+            ADD_INSTRUCTION_ARG=""
+            if [ "$ADD_INSTRUCTION" = true ]; then
+                ADD_INSTRUCTION_ARG="--add_instruction"
+            fi
+
             python evaluation/merge_stage1_results.py \
                 --benchmark "$BENCH" \
                 --checkpoint "$CKPT" \
@@ -137,7 +157,8 @@ if [ $FAILED -eq 0 ]; then
                 --num_ranks $NUM_GPUS \
                 --steps $STEPS \
                 --output_dir "$OUTPUT_DIR" \
-                $MAX_LASER_STEPS_ARG
+                $MAX_LASER_STEPS_ARG \
+                $ADD_INSTRUCTION_ARG
 
             if [ $? -ne 0 ]; then
                 echo "WARNING: Failed to merge results for $CKPT/$BENCH"

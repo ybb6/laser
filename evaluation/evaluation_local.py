@@ -121,8 +121,8 @@ def load_model_and_processor(chkpt_pth):
     # Load config
     config = AutoConfig.from_pretrained(chkpt_pth, trust_remote_code=True)
 
-    # Patch forward function for DWAL inference
-    replace_qwen2_5_with_mixed_modality_forward_laser(dwal=True)
+    # Patch forward function for inference
+    replace_qwen2_5_with_mixed_modality_forward_laser(inference_mode=True)
 
     # Check if this is a DeepSpeed checkpoint (no pytorch_model.bin/safetensors)
     has_hf_weights = (
@@ -200,13 +200,6 @@ def run_inference(model, processor, img_path, text, steps, decoding_strategy, ma
         messages, tokenize=False, add_generation_prompt=True
     )
 
-    # Debug: print full formatted prompt
-    print("=" * 80)
-    print("[DEBUG] Full formatted prompt:")
-    print("=" * 80)
-    print(text_formatted)
-    print("=" * 80)
-
     image_inputs, video_inputs = process_vision_info(messages)
 
     inputs = processor(
@@ -253,21 +246,12 @@ def run_inference(model, processor, img_path, text, steps, decoding_strategy, ma
         generated_ids_trimmed = [
             out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
-        # Debug: print generated length
-        gen_len = len(generated_ids[0]) - len(inputs.input_ids[0])
-        import sys
-        print(f"[DEBUG] Generated length: {gen_len}", file=sys.stderr)
 
         output_text = processor.batch_decode(
             generated_ids_trimmed,
             skip_special_tokens=False,
             clean_up_tokenization_spaces=False
         )
-
-    # Debug: print model output
-    print("[DEBUG] Model output:")
-    print(output_text[0])
-    print("=" * 80)
 
     # Return with top-k records if requested
     if save_laser_topk is not None:
@@ -354,7 +338,7 @@ def parse_args():
         "--benchmark",
         type=str,
         nargs="+",
-        choices=["blink", "vstar", "mmvp", "realworldqa", "mmstar", "seedbench2plus", "hallusionbench", "mme", "hrbench", "vsr_filtered", "cub_filtered", "muirbench", "visulogic", "geometry3k"],
+        choices=["blink", "mmvp", "mmstar", "seedbench2plus", "hallusionbench", "hrbench"],
         default=None,
         help="Which benchmarks to run (default: all enabled in config)"
     )
@@ -397,6 +381,13 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--add_instruction",
+        action="store_true",
+        default=False,
+        help="Add benchmark-specific instruction prompts to questions"
+    )
+
+    parser.add_argument(
         "--save_laser_topk",
         type=int,
         default=None,
@@ -410,20 +401,17 @@ def main():
     args = parse_args()
 
     # Update output directories based on args.output_dir
-    DATASET_CONFIG['blink']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "blink")
-    DATASET_CONFIG['vstar']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "vstar")
-    DATASET_CONFIG['MMVP']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "mmvp")
-    DATASET_CONFIG['realworldqa']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "realworldqa")
-    DATASET_CONFIG['mmstar']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "mmstar")
-    DATASET_CONFIG['seedbench2plus']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "seedbench2plus")
-    DATASET_CONFIG['hallusionbench']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "hallusionbench")
-    DATASET_CONFIG['mme']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "mme")
-    DATASET_CONFIG['hrbench']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "hrbench")
-    DATASET_CONFIG['vsr_filtered']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "vsr_filtered")
-    DATASET_CONFIG['cub_filtered']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "cub_filtered")
-    DATASET_CONFIG['muirbench']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "muirbench")
-    DATASET_CONFIG['visulogic']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "visulogic")
-    DATASET_CONFIG['geometry3k']['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, "geometry3k")
+    # Also auto-create entries for benchmarks not yet in DATASET_CONFIG
+    ALL_BENCHMARK_NAMES = [
+        "blink", "MMVP", "mmstar", "seedbench2plus", "hallusionbench", "hrbench",
+    ]
+    # Map from config key to output subdirectory name
+    BENCHMARK_OUTPUT_SUBDIR = {"MMVP": "mmvp"}
+    for name in ALL_BENCHMARK_NAMES:
+        if name not in DATASET_CONFIG:
+            DATASET_CONFIG[name] = {"enabled": True}
+        subdir = BENCHMARK_OUTPUT_SUBDIR.get(name, name.lower())
+        DATASET_CONFIG[name]['output_dir'] = os.path.join(PROJECT_ROOT, args.output_dir, subdir)
 
     # Determine checkpoint paths
     if args.checkpoint:
@@ -480,6 +468,7 @@ def main():
         print(f"Max LASER steps (for forced exit): {max_laser_steps}")
     else:
         max_laser_steps = None
+    print(f"Add instruction: {args.add_instruction}")
     print(f"Repetition exit: {args.repetition_exit}")
     if args.world_size > 1:
         print(f"Parallel mode: Rank {args.rank}/{args.world_size}")
@@ -504,6 +493,9 @@ def main():
         else:
             strategy_dir_name = f"decoding_by_{decoding_strategy}"
 
+        if args.add_instruction:
+            strategy_dir_name += "_with_inst"
+
         # Append repetition_exit flag to directory name
         if args.repetition_exit:
             strategy_dir_name += "_rep_exit"
@@ -518,6 +510,7 @@ def main():
             evaluate_blink(model, processor, output_dir, decoding_strategy, step_list,
                           args.rank, args.world_size, seed=42, max_laser_steps=max_laser_steps,
                           blink_configs=blink_configs,
+                          add_instruction=args.add_instruction,
                           repetition_exit=args.repetition_exit)
 
         # MMVP evaluation
@@ -529,6 +522,7 @@ def main():
             )
             evaluate_mmvp(model, processor, output_dir, decoding_strategy, step_list,
                          args.rank, args.world_size, seed=42, max_laser_steps=max_laser_steps,
+                         add_instruction=args.add_instruction,
                          repetition_exit=args.repetition_exit)
 
         # MMStar evaluation
@@ -540,6 +534,7 @@ def main():
             )
             evaluate_mmstar(model, processor, output_dir, decoding_strategy, step_list,
                            args.rank, args.world_size, seed=42, max_laser_steps=max_laser_steps,
+                           add_instruction=args.add_instruction,
                            repetition_exit=args.repetition_exit)
 
         # SEED-Bench-2-Plus evaluation
@@ -551,6 +546,7 @@ def main():
             )
             evaluate_seedbench2plus(model, processor, output_dir, decoding_strategy, step_list,
                                    args.rank, args.world_size, seed=42, max_laser_steps=max_laser_steps,
+                                   add_instruction=args.add_instruction,
                                    repetition_exit=args.repetition_exit)
 
         # HallusionBench evaluation
@@ -562,6 +558,7 @@ def main():
             )
             evaluate_hallusionbench(model, processor, output_dir, decoding_strategy, step_list,
                                    args.rank, args.world_size, seed=42, max_laser_steps=max_laser_steps,
+                                   add_instruction=args.add_instruction,
                                    repetition_exit=args.repetition_exit)
 
         # HRBench evaluation
@@ -573,6 +570,7 @@ def main():
             )
             evaluate_hrbench(model, processor, output_dir, decoding_strategy, step_list,
                             args.rank, args.world_size, seed=42, max_laser_steps=max_laser_steps,
+                            add_instruction=args.add_instruction,
                             repetition_exit=args.repetition_exit)
 
     print(f"\n{'#'*80}")
