@@ -1,6 +1,10 @@
 # Forest Before Trees: Latent Superposition for Efficient Visual Reasoning
 
 [![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](http://arxiv.org/abs/2601.06803)
+<<<<<<< HEAD
+=======
+[![Checkpoint](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Checkpoint-blue)](https://huggingface.co/wybb/laser-7b)
+>>>>>>> 133761b (Update evaluation)
 [![Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Dataset-blue)](https://huggingface.co/datasets/wybb/Laser-ScanPath)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
@@ -10,6 +14,10 @@ Official implementation of **Laser** (Latent Superposition for Effective Visual 
 
 ## 📢 News 
 
+<<<<<<< HEAD
+=======
+- **[2026/04]** 🚀 Laser-7B checkpoint released on Hugging Face: [wybb/laser-7b](https://huggingface.co/wybb/laser-7b)
+>>>>>>> 133761b (Update evaluation)
 - **[2026/04]** 🚀 Training data ([ScanPath](https://huggingface.co/datasets/wybb/Laser-ScanPath)) released!
 - **[2026/01]** Code release for Laser.
 
@@ -115,11 +123,15 @@ We support a comprehensive suite of visual reasoning benchmarks:
 ## Model
 
 ### Checkpoints
-We will release the pre-trained weights upon acceptance or shortly after the arXiv release.
+The released checkpoint is now available on Hugging Face.
 
 | Model | Base Model | Status | Download |
 |-------|------------|--------|----------|
+<<<<<<< HEAD
 | **Laser-7B** | Qwen2.5-VL-7B-Instruct | *Coming Soon* | - |
+=======
+| **Laser-7B** | Qwen2.5-VL-7B-Instruct | *Released* | [HF Link](https://huggingface.co/wybb/laser-7b) |
+>>>>>>> 133761b (Update evaluation)
 
 
 ## Citation
